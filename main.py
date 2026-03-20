@@ -147,6 +147,7 @@ class App(ctk.CTk):
         self._refresh_job = None
         self._countdown_job = None
         self._ad_timer_job = None
+        self._running: dict[str, subprocess.Popen] = {}  # url → running process
         self._ad_seconds_remaining = 0
 
         self._build_ui()
@@ -450,6 +451,10 @@ class App(ctk.CTk):
     # ── Stream launcher ───────────────────────────────────────────────────────
 
     def _launch_stream(self, name: str, url: str) -> None:
+        existing = self._running.get(url)
+        if existing and existing.poll() is None:
+            self._log(name, "Stream already running.")
+            return
         player_args = ["--player", self.player] if self.player else []
         cmd = ["streamlink", *player_args, url, self.quality]
         self._log(name, f"Starting: {' '.join(cmd)}")
@@ -461,7 +466,8 @@ class App(ctk.CTk):
                 text=True,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             )
-            threading.Thread(target=self._read_output, args=(name, proc), daemon=True).start()
+            self._running[url] = proc
+            threading.Thread(target=self._read_output, args=(name, url, proc), daemon=True).start()
         except FileNotFoundError:
             self._log(name, "ERROR: streamlink not found in PATH")
             msgbox.showerror(
@@ -471,11 +477,12 @@ class App(ctk.CTk):
                 "or from:          https://streamlink.github.io",
             )
 
-    def _read_output(self, name: str, proc: subprocess.Popen) -> None:
+    def _read_output(self, name: str, url: str, proc: subprocess.Popen) -> None:
         for line in proc.stdout:
             line = line.rstrip()
             if line:
                 self.after(0, lambda l=line: self._log(name, l))
+        self._running.pop(url, None)
         self.after(0, lambda: self._log(name, "Stream ended."))
 
     def _log(self, name: str, line: str) -> None:
